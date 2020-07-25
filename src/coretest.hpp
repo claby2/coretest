@@ -1,5 +1,5 @@
-#ifndef CORE_TEST_HPP
-#define CORE_TEST_HPP
+#ifndef CORETEST_HPP
+#define CORETEST_HPP
 
 #include <algorithm>
 #include <exception>
@@ -174,6 +174,8 @@ void print_assertion(Assertion assertion) {
     std::cout << assertion.suffix << "( " + assertion.first + assertion.comparison_operator + assertion.second + " )" << '\n';
 }
 
+// Print failed checks from specified index and increment counter.
+// Can be overriden to print passed assertions if show_successful flag is true
 void print_checks(int initial_assertions, int &assertions_failed) {
     for (int i = initial_assertions; i < assertions.size(); i++) {
         Assertion assertion = assertions[i];
@@ -186,6 +188,7 @@ void print_checks(int initial_assertions, int &assertions_failed) {
     }
 }
 
+// Print end results
 void print_results(int tests_failed, int assertions_failed) {
     std::cout << '\n';
     if (tests_failed > 0) {
@@ -203,6 +206,7 @@ void print_results(int tests_failed, int assertions_failed) {
     }
 }
 
+// Run through tests
 void run_tests() {
     std::cout << '\n';
     int tests_failed = 0;
@@ -239,7 +243,7 @@ void run_tests() {
             tests_failed++;
         }
         if (!has_catch && has_failed(initial_assertions, assertions.size())) {
-            // Checks have failed in the test case but no error was thrown (no REQUIRE)
+            // Checks have failed in the test case but no error was thrown (no failed REQUIRE)
             // Print test case
             print_test(test);
             // Print failed checks
