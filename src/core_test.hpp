@@ -37,7 +37,10 @@ struct Test {
     int line_number;
 };
 
-struct Check {
+struct Assertion {
+    bool passed;
+    AssertionType type;
+    ComparisonType comparison;
     std::string first;
     std::string second;
     std::string suffix;
@@ -55,10 +58,9 @@ std::vector<Test> tests;
 std::map<std::string, int> test_names;
 // Holds user specifed tests to run
 std::vector<std::string> specified_tests;
-// Holds the checks which have failed
-std::vector<Check> failed_checks;
-// Number of assertions
-int assertions = 0;
+// Holds all assertions
+std::vector<Assertion> assertions;
+bool show_successful = false;
 
 PushTest::PushTest(std::function<void()> &&test, std::string test_name, std::string file_name, int line_number) {
     tests.push_back({test, test_name, file_name, line_number});
@@ -91,90 +93,113 @@ std::string get_string(char var) {
     return std::string(1, var);
 }
 
-void exception_throw(AssertionType assertion_type, ComparisonType comparison_type, std::string first, std::string second = "") {
-    std::string suffix;
-    std::string comparison_operator;
-    switch (comparison_type) {
+void add_assertion(Assertion &assertion) {
+    switch (assertion.comparison) {
         case ComparisonType::EQUAL:
-            comparison_operator = " == ";
-            suffix = "EQUAL";
+            assertion.comparison_operator = " == ";
+            assertion.suffix = "EQUAL";
             break;
         case ComparisonType::TRUE:
-            second = "true";
-            comparison_operator = " == ";
-            suffix = "TRUE";
+            assertion.second = "true";
+            assertion.comparison_operator = " == ";
+            assertion.suffix = "TRUE";
             break;
         case ComparisonType::FALSE:
-            second = "false";
-            comparison_operator = " == ";
-            suffix = "FALSE";
+            assertion.second = "false";
+            assertion.comparison_operator = " == ";
+            assertion.suffix = "FALSE";
             break;
         case ComparisonType::NOT_EQUAL:
-            comparison_operator = " != ";
-            suffix = "NOT_EQUAL";
+            assertion.comparison_operator = " != ";
+            assertion.suffix = "NOT_EQUAL";
             break;
         case ComparisonType::LESS:
-            comparison_operator = " < ";
-            suffix = "LESS";
+            assertion.comparison_operator = " < ";
+            assertion.suffix = "LESS";
             break;
         case ComparisonType::LESS_EQUAL:
-            comparison_operator = " <= ";
-            suffix = "LESS_EQUAL";
+            assertion.comparison_operator = " <= ";
+            assertion.suffix = "LESS_EQUAL";
             break;
         case ComparisonType::GREATER:
-            comparison_operator = " > ";
-            suffix = "GREATER";
+            assertion.comparison_operator = " > ";
+            assertion.suffix = "GREATER";
             break;
         case ComparisonType::GREATER_EQUAL:
-            comparison_operator = " >= ";
-            suffix = "GREATER_EQUAL";
+            assertion.comparison_operator = " >= ";
+            assertion.suffix = "GREATER_EQUAL";
             break;
     }
-    switch (assertion_type) {
-        case AssertionType::REQUIRE:
-            throw coretest::CoreTestError("REQUIRE_" + suffix + "( " + first + comparison_operator + second + " )");
-            break;
-        case AssertionType::CHECK:
-            failed_checks.push_back({first, second, suffix, comparison_operator});
-            break;
+    assertions.push_back(assertion);
+    if (assertion.passed == false) {
+        switch (assertion.type) {
+            case AssertionType::REQUIRE:
+                throw coretest::CoreTestError("REQUIRE_" + assertion.suffix + "( " + assertion.first + assertion.comparison_operator + assertion.second + " )");
+                break;
+        }
     }
+}
+
+// Return if any assertion from start_index to end_index have failed
+bool has_failed(int start_index, int end_index) {
+    for (auto assertion : assertions) {
+        if (assertion.passed = false) {
+            return true;
+        }
+    }
+    return false;
 }
 
 // Output functions
 
+// Print formatted test name with file name and line number
 void print_test(Test test) {
     std::cout << std::string(separator_length, '-') << '\n';
     std::cout << test.test_name << " ( " << test.file_name << ":" << test.line_number << " )" << '\n';
 }
 
-void print_failed_assertion(std::string message) {
-    std::cout << "FAILED:" << '\n';
-    std::cout << std::string(4, ' ') << message << '\n';
+// Print assertion
+void print_assertion(Assertion assertion) {
+    if (assertion.passed) {
+        std::cout << "PASSED:" << '\n';
+    } else {
+        std::cout << "FAILED:" << '\n';
+    }
+    std::cout << std::string(4, ' ');
+    if (assertion.type == AssertionType::REQUIRE) {
+        std::cout << "REQUIRE_";
+    } else if (assertion.type == AssertionType::CHECK) {
+        std::cout << "CHECK_";
+    }
+    std::cout << assertion.suffix << "( " + assertion.first + assertion.comparison_operator + assertion.second + " )" << '\n';
 }
 
-void print_failed_checks(int initial_checks_failed, int &assertions_failed) {
-    for (int i = initial_checks_failed; i < failed_checks.size(); i++) {
-        // Iterate through new failed checks
-        Check check = failed_checks[i];
-        print_failed_assertion("CHECK_" + check.suffix + "( " + check.first + check.comparison_operator + check.second + " )");
+void print_checks(int initial_assertions, int &assertions_failed) {
+    for (int i = initial_assertions; i < assertions.size(); i++) {
+        Assertion assertion = assertions[i];
+        if ((show_successful && assertion.passed == true) || (assertion.passed == false && assertion.type == AssertionType::CHECK)) {
+            print_assertion(assertion);
+            if (assertion.passed == false) {
+                assertions_failed++;
+            }
+        }
     }
-    assertions_failed += (failed_checks.size() - initial_checks_failed);
 }
 
 void print_results(int tests_failed, int assertions_failed) {
     std::cout << '\n';
     if (tests_failed > 0) {
         // Get maximum string size for counts for output alignment
-        int tests_count_size = std::to_string(tests.size()).size();
-        int assertions_count_size = std::to_string(assertions).size();
+        int tests_count_size = std::to_string(tests.size()).length();
+        int assertions_count_size = std::to_string(assertions.size()).length();
         int max_size = std::max(tests_count_size, assertions_count_size);
         std::cout << std::string(separator_length, '=') << '\n';
         std::cout << "test cases: " << tests.size() << std::string((max_size - tests_count_size), ' ') << " | " << tests_failed << " failed" << '\n';
-        std::cout << "assertions: " << assertions << std::string((max_size - assertions_count_size), ' ') << " | " << assertions_failed << " failed" << '\n';
+        std::cout << "assertions: " << assertions.size() << std::string((max_size - assertions_count_size), ' ') << " | " << assertions_failed << " failed" << '\n';
     } else {
         // All tests have passed
         std::cout << std::string(separator_length, '=') << '\n';
-        std::cout << "All tests passed ( " << assertions << " assertions in " << tests.size() << " test cases )" << '\n';
+        std::cout << "All tests passed ( " << assertions.size() << " assertions in " << tests.size() << " test cases )" << '\n';
     }
 }
 
@@ -182,7 +207,7 @@ void run_tests() {
     std::cout << '\n';
     int tests_failed = 0;
     int assertions_failed = 0;
-    int initial_checks_failed = 0;
+    int initial_assertions = 0;
     if (specified_tests.size() > 0) {
         // User has supplied specific tests to run
         std::vector<Test> new_tests;
@@ -196,7 +221,7 @@ void run_tests() {
         tests = new_tests;
     }
     for (auto test : tests) {
-        initial_checks_failed = failed_checks.size();
+        initial_assertions = assertions.size();
         bool has_catch = false;
         try {
             test.function();
@@ -205,19 +230,24 @@ void run_tests() {
             // Print test case
             print_test(test);
             // Print failed checks
-            print_failed_checks(initial_checks_failed, assertions_failed);
+            print_checks(initial_assertions, assertions_failed);
             // Print failed assertion
-            print_failed_assertion(e.what());
+            std::cout << "FAILED:" << '\n';
+            std::cout << std::string(4, ' ') << e.what() << '\n';
+            // Assertions failed increase by 1 to account for thrown error
             assertions_failed++;
             tests_failed++;
         }
-        if (!has_catch && (failed_checks.size() - initial_checks_failed) > 0) {
+        if (!has_catch && has_failed(initial_assertions, assertions.size())) {
             // Checks have failed in the test case but no error was thrown (no REQUIRE)
             // Print test case
             print_test(test);
             // Print failed checks
-            print_failed_checks(initial_checks_failed, assertions_failed);
+            print_checks(initial_assertions, assertions_failed);
             tests_failed++;
+        } else if (!has_catch && show_successful == true) {
+            print_test(test);
+            print_checks(initial_assertions, assertions_failed);
         }
     }
     print_results(tests_failed, assertions_failed);
@@ -243,144 +273,192 @@ void list_tests() {
 
 // Define assertion macros
 
-#define REQUIRE_EQUAL(first, second)                                \
-    coretest::assertions++;                                         \
-    if (first != second) {                                          \
-        coretest::exception_throw(coretest::AssertionType::REQUIRE, \
-                                  coretest::ComparisonType::EQUAL,  \
-                                  coretest::get_string(first),      \
-                                  coretest::get_string(second));    \
+#define REQUIRE_EQUAL(first, second)            \
+    {                                           \
+        coretest::Assertion assertion = {       \
+            ((first == second) ? true : false), \
+            coretest::AssertionType::REQUIRE,   \
+            coretest::ComparisonType::EQUAL,    \
+            coretest::get_string(first),        \
+            coretest::get_string(second),       \
+        };                                      \
+        coretest::add_assertion(assertion);     \
     }
 
-#define REQUIRE_TRUE(first)                                         \
-    coretest::assertions++;                                         \
-    if (first == false) {                                           \
-        coretest::exception_throw(coretest::AssertionType::REQUIRE, \
-                                  coretest::ComparisonType::TRUE,   \
-                                  coretest::get_string(first));     \
+#define REQUIRE_TRUE(first)                   \
+    {                                         \
+        coretest::Assertion assertion = {     \
+            ((first == true) ? true : false), \
+            coretest::AssertionType::REQUIRE, \
+            coretest::ComparisonType::TRUE,   \
+            coretest::get_string(first),      \
+        };                                    \
+        coretest::add_assertion(assertion);   \
     }
 
-#define REQUIRE_FALSE(first)                                        \
-    coretest::assertions++;                                         \
-    if (first == true) {                                            \
-        coretest::exception_throw(coretest::AssertionType::REQUIRE, \
-                                  coretest::ComparisonType::FALSE,  \
-                                  coretest::get_string(first));     \
+#define REQUIRE_FALSE(first)                   \
+    {                                          \
+        coretest::Assertion assertion = {      \
+            ((first == false) ? true : false), \
+            coretest::AssertionType::REQUIRE,  \
+            coretest::ComparisonType::FALSE,   \
+            coretest::get_string(first),       \
+        };                                     \
+        coretest::add_assertion(assertion);    \
     }
 
-#define REQUIRE_NOT_EQUAL(first, second)                               \
-    coretest::assertions++;                                            \
-    if (first == second) {                                             \
-        coretest::exception_throw(coretest::AssertionType::REQUIRE,    \
-                                  coretest::ComparisonType::NOT_EQUAL, \
-                                  coretest::get_string(first),         \
-                                  coretest::get_string(second));       \
+#define REQUIRE_NOT_EQUAL(first, second)         \
+    {                                            \
+        coretest::Assertion assertion = {        \
+            ((first != second) ? true : false),  \
+            coretest::AssertionType::REQUIRE,    \
+            coretest::ComparisonType::NOT_EQUAL, \
+            coretest::get_string(first),         \
+            coretest::get_string(second),        \
+        };                                       \
+        coretest::add_assertion(assertion);      \
     }
 
-#define REQUIRE_LESS(first, second)                                 \
-    coretest::assertions++;                                         \
-    if (first >= second) {                                          \
-        coretest::exception_throw(coretest::AssertionType::REQUIRE, \
-                                  coretest::ComparisonType::LESS,   \
-                                  coretest::get_string(first),      \
-                                  coretest::get_string(second));    \
+#define REQUIRE_LESS(first, second)            \
+    {                                          \
+        coretest::Assertion assertion = {      \
+            ((first < second) ? true : false), \
+            coretest::AssertionType::REQUIRE,  \
+            coretest::ComparisonType::LESS,    \
+            coretest::get_string(first),       \
+            coretest::get_string(second),      \
+        };                                     \
+        coretest::add_assertion(assertion);    \
     }
 
-#define REQUIRE_LESS_EQUAL(first, second)                               \
-    coretest::assertions++;                                             \
-    if (first > second) {                                               \
-        coretest::exception_throw(coretest::AssertionType::REQUIRE,     \
-                                  coretest::ComparisonType::LESS_EQUAL, \
-                                  coretest::get_string(first),          \
-                                  coretest::get_string(second));        \
+#define REQUIRE_LESS_EQUAL(first, second)         \
+    {                                             \
+        coretest::Assertion assertion = {         \
+            ((first <= second) ? true : false),   \
+            coretest::AssertionType::REQUIRE,     \
+            coretest::ComparisonType::LESS_EQUAL, \
+            coretest::get_string(first),          \
+            coretest::get_string(second),         \
+        };                                        \
+        coretest::add_assertion(assertion);       \
     }
 
-#define REQUIRE_GREATER(first, second)                               \
-    coretest::assertions++;                                          \
-    if (first <= second) {                                           \
-        coretest::exception_throw(coretest::AssertionType::REQUIRE,  \
-                                  coretest::ComparisonType::GREATER, \
-                                  coretest::get_string(first),       \
-                                  coretest::get_string(second));     \
+#define REQUIRE_GREATER(first, second)         \
+    {                                          \
+        coretest::Assertion assertion = {      \
+            ((first > second) ? true : false), \
+            coretest::AssertionType::REQUIRE,  \
+            coretest::ComparisonType::GREATER, \
+            coretest::get_string(first),       \
+            coretest::get_string(second),      \
+        };                                     \
+        coretest::add_assertion(assertion);    \
     }
 
-#define REQUIRE_GREATER_EQUAL(first, second)                               \
-    coretest::assertions++;                                                \
-    if (first < second) {                                                  \
-        coretest::exception_throw(coretest::AssertionType::REQUIRE,        \
-                                  coretest::ComparisonType::GREATER_EQUAL, \
-                                  coretest::get_string(first),             \
-                                  coretest::get_string(second));           \
+#define REQUIRE_GREATER_EQUAL(first, second)         \
+    {                                                \
+        coretest::Assertion assertion = {            \
+            ((first >= second) ? true : false),      \
+            coretest::AssertionType::REQUIRE,        \
+            coretest::ComparisonType::GREATER_EQUAL, \
+            coretest::get_string(first),             \
+            coretest::get_string(second),            \
+        };                                           \
+        coretest::add_assertion(assertion);          \
     }
 
-#define CHECK_EQUAL(first, second)                                 \
-    coretest::assertions++;                                        \
-    if (first != second) {                                         \
-        coretest::exception_throw(coretest::AssertionType::CHECK,  \
-                                  coretest::ComparisonType::EQUAL, \
-                                  coretest::get_string(first),     \
-                                  coretest::get_string(second));   \
+#define CHECK_EQUAL(first, second)              \
+    {                                           \
+        coretest::Assertion assertion = {       \
+            ((first == second) ? true : false), \
+            coretest::AssertionType::CHECK,     \
+            coretest::ComparisonType::EQUAL,    \
+            coretest::get_string(first),        \
+            coretest::get_string(second),       \
+        };                                      \
+        coretest::add_assertion(assertion);     \
     }
 
-#define CHECK_TRUE(first)                                         \
-    coretest::assertions++;                                       \
-    if (first == false) {                                         \
-        coretest::exception_throw(coretest::AssertionType::CHECK, \
-                                  coretest::ComparisonType::TRUE, \
-                                  coretest::get_string(first));   \
+#define CHECK_TRUE(first)                     \
+    {                                         \
+        coretest::Assertion assertion = {     \
+            ((first == true) ? true : false), \
+            coretest::AssertionType::CHECK,   \
+            coretest::ComparisonType::TRUE,   \
+            coretest::get_string(first),      \
+        };                                    \
+        coretest::add_assertion(assertion);   \
     }
 
-#define CHECK_FALSE(first)                                         \
-    coretest::assertions++;                                        \
-    if (first == true) {                                           \
-        coretest::exception_throw(coretest::AssertionType::CHECK,  \
-                                  coretest::ComparisonType::FALSE, \
-                                  coretest::get_string(first));    \
+#define CHECK_FALSE(first)                     \
+    {                                          \
+        coretest::Assertion assertion = {      \
+            ((first == false) ? true : false), \
+            coretest::AssertionType::CHECK,    \
+            coretest::ComparisonType::FALSE,   \
+            coretest::get_string(first),       \
+        };                                     \
+        coretest::add_assertion(assertion);    \
     }
 
-#define CHECK_NOT_EQUAL(first, second)                                 \
-    coretest::assertions++;                                            \
-    if (first == second) {                                             \
-        coretest::exception_throw(coretest::AssertionType::CHECK,      \
-                                  coretest::ComparisonType::NOT_EQUAL, \
-                                  coretest::get_string(first),         \
-                                  coretest::get_string(second));       \
+#define CHECK_NOT_EQUAL(first, second)           \
+    {                                            \
+        coretest::Assertion assertion = {        \
+            ((first != second) ? true : false),  \
+            coretest::AssertionType::CHECK,      \
+            coretest::ComparisonType::NOT_EQUAL, \
+            coretest::get_string(first),         \
+            coretest::get_string(second),        \
+        };                                       \
+        coretest::add_assertion(assertion);      \
     }
 
-#define CHECK_LESS(first, second)                                 \
-    coretest::assertions++;                                       \
-    if (first >= second) {                                        \
-        coretest::exception_throw(coretest::AssertionType::CHECK, \
-                                  coretest::ComparisonType::LESS, \
-                                  coretest::get_string(first),    \
-                                  coretest::get_string(second));  \
+#define CHECK_LESS(first, second)              \
+    {                                          \
+        coretest::Assertion assertion = {      \
+            ((first < second) ? true : false), \
+            coretest::AssertionType::CHECK,    \
+            coretest::ComparisonType::LESS,    \
+            coretest::get_string(first),       \
+            coretest::get_string(second),      \
+        };                                     \
+        coretest::add_assertion(assertion);    \
     }
 
-#define CHECK_LESS_EQUAL(first, second)                                 \
-    coretest::assertions++;                                             \
-    if (first > second) {                                               \
-        coretest::exception_throw(coretest::AssertionType::CHECK,       \
-                                  coretest::ComparisonType::LESS_EQUAL, \
-                                  coretest::get_string(first),          \
-                                  coretest::get_string(second));        \
+#define CHECK_LESS_EQUAL(first, second)           \
+    {                                             \
+        coretest::Assertion assertion = {         \
+            ((first <= second) ? true : false),   \
+            coretest::AssertionType::CHECK,       \
+            coretest::ComparisonType::LESS_EQUAL, \
+            coretest::get_string(first),          \
+            coretest::get_string(second),         \
+        };                                        \
+        coretest::add_assertion(assertion);       \
     }
 
-#define CHECK_GREATER(first, second)                                 \
-    coretest::assertions++;                                          \
-    if (first <= second) {                                           \
-        coretest::exception_throw(coretest::AssertionType::CHECK,    \
-                                  coretest::ComparisonType::GREATER, \
-                                  coretest::get_string(first),       \
-                                  coretest::get_string(second));     \
+#define CHECK_GREATER(first, second)           \
+    {                                          \
+        coretest::Assertion assertion = {      \
+            ((first > second) ? true : false), \
+            coretest::AssertionType::CHECK,    \
+            coretest::ComparisonType::GREATER, \
+            coretest::get_string(first),       \
+            coretest::get_string(second),      \
+        };                                     \
+        coretest::add_assertion(assertion);    \
     }
 
-#define CHECK_GREATER_EQUAL(first, second)                                 \
-    coretest::assertions++;                                                \
-    if (first < second) {                                                  \
-        coretest::exception_throw(coretest::AssertionType::CHECK,          \
-                                  coretest::ComparisonType::GREATER_EQUAL, \
-                                  coretest::get_string(first),             \
-                                  coretest::get_string(second));           \
+#define CHECK_GREATER_EQUAL(first, second)           \
+    {                                                \
+        coretest::Assertion assertion = {            \
+            ((first >= second) ? true : false),      \
+            coretest::AssertionType::CHECK,          \
+            coretest::ComparisonType::GREATER_EQUAL, \
+            coretest::get_string(first),             \
+            coretest::get_string(second),            \
+        };                                           \
+        coretest::add_assertion(assertion);          \
     }
 
 // Standard main entry point
@@ -399,6 +477,9 @@ int main(int argc, char **argv) {
             } else if (arg == "-l" || arg == "--list-tests") {
                 // List tests
                 list_tests = true;
+            } else if (arg == "-s" || arg == "--success") {
+                // Show successful tests
+                coretest::show_successful = true;
             }
         }
     }
