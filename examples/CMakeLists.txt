@@ -1,4 +1,4 @@
-project(core-test-examples CXX)
+project(coretest-examples CXX)
 cmake_minimum_required(VERSION 3.10)
 set(CMAKE_CXX_STANDARD 17)
 

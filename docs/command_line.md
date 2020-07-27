@@ -58,3 +58,5 @@ For example, the `is_even_test` test case can be run with:
 | `-l`, `--list-tests`       | list all test cases                 |
 | `-o`, `--out` `<filename>` | write output to filename            |
 | `-s`, `--success`          | include successful tests in output  |
+
+[Home](./readme.md)

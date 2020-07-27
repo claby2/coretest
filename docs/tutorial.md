@@ -8,7 +8,7 @@
 
 ## Installation
 
-1. Download the header in [`/src`](https://github.com/claby2/core-test/tree/master/coretest)
+1. Download the header in [`/src`](https://github.com/claby2/coretest/tree/master/coretest)
 2. Either put the header file in a central location (with a specified path) or directly in your project tree.
 
 ## Implementing tests
@@ -46,9 +46,9 @@ Keep in mind that the function that is being tested is included in the file for 
 
 ## Implementing sections
 
-Along with multiple test cases, `core-test` allows multiple sections.
+Along with multiple test cases, `coretest` allows multiple sections.
 
-We can extend the previous test file by adding another function that checks if a number is even and utilizing sections.
+We can extend the previous test file by adding another function that checks if a number is even.
 
 [`tutorial_sections.cpp`](../examples/tutorial_sections.cpp):
 
@@ -80,3 +80,5 @@ TEST(is_even_test) {
     }
 }
 ```
+
+[Home](./readme.md)
