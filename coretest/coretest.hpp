@@ -3,9 +3,11 @@
 
 #include <algorithm>
 #include <exception>
+#include <fstream>
 #include <functional>
 #include <iostream>
 #include <map>
+#include <unordered_map>
 #include <vector>
 
 namespace coretest {
@@ -45,6 +47,16 @@ struct Assertion {
     std::string second;
     std::string suffix;
     std::string comparison_operator;
+
+    Assertion(bool new_passed, AssertionType new_type, ComparisonType new_comparison, std::string new_first, std::string new_second = "", std::string new_suffix = "", std::string new_comparison_operator = "") {
+        passed = new_passed;
+        type = new_type;
+        comparison = new_comparison;
+        first = new_first;
+        second = new_second;
+        suffix = new_suffix;
+        comparison_operator = new_comparison_operator;
+    }
 };
 
 struct PushTest {
@@ -60,35 +72,164 @@ std::map<std::string, int> test_names;
 std::vector<std::string> specified_tests;
 // Holds all assertions
 std::vector<Assertion> assertions;
-bool show_successful = false;
+std::ofstream file_out;
+std::streambuf *coutbuf;
 
 PushTest::PushTest(std::function<void()> &&test, std::string test_name, std::string file_name, int line_number) {
     tests.push_back({test, test_name, file_name, line_number});
     test_names[test_name] = tests.size();
 }
 
+// Command line option
+class Option {
+   public:
+    Option(bool &ref) : option_reference(ref) {}
+
+    inline auto &operator[](const std::string name) {
+        args.push_back(name);
+        return *this;
+    }
+
+    inline auto &operator()(std::string new_description, std::string new_name) {
+        description = new_description;
+        name = new_name;
+        return *this;
+    }
+
+    bool is_match(std::string argument) {
+        for (auto arg : args) {
+            if (argument == arg) {
+                option_reference = true;
+                return true;
+            }
+        }
+        return false;
+    }
+
+    inline std::vector<std::string> get_args() {
+        return args;
+    }
+
+    inline std::string get_description() {
+        return description;
+    }
+
+    inline void set_require_argument(bool require) {
+        require_argument = require;
+    }
+
+    inline bool get_require_argument() {
+        return require_argument;
+    }
+
+    inline void set_argument(std::string new_argument) {
+        argument = new_argument;
+    }
+
+    inline std::string get_argument() {
+        return argument;
+    }
+
+    inline std::string get_name() {
+        return name;
+    }
+
+   private:
+    bool &option_reference;
+    bool require_argument = false;
+    std::vector<std::string> args;
+    std::string description;
+    std::string argument;
+    std::string name;
+};
+
+class TestCaseOption {
+   public:
+    TestCaseOption() {}
+    bool is_match(std::string argument) {
+        if (argument[0] == '[' && argument[argument.length() - 1] == ']') {
+            // Get test name without [ ] chars
+            std::string test_name = argument.substr(1, argument.length() - 2);
+            // Remove whitespace
+            test_name.erase(std::remove(test_name.begin(), test_name.end(), ' '), test_name.end());
+            specified_tests.push_back(test_name);
+            return true;
+        }
+        return false;
+    }
+};
+
+// Declare test case command line argument
+TestCaseOption test_case_option;
+
+// Holds command line argument options
+std::unordered_map<std::string, Option> options_unordered_map;
+bool show_successful = false;
+bool show_list = false;
+bool show_help = false;
+bool send_to_file = false;
+
+template <typename First, typename... Rest>
+void add_options(First first, Rest... rest) {
+    add_options(first);
+    add_options(rest...);
+}
+
+template <>
+void add_options(Option option) {
+    options_unordered_map.insert(std::make_pair(option.get_name(), option));
+}
+
+// Initialize options
+void initialize_options() {
+    Option list(show_list);
+    list["-l"]["--list-tests"]("list all test cases", "list");
+    Option successful_tests(show_successful);
+    successful_tests["-s"]["--success"]("include successful tests in output", "successful_tests");
+    Option help(show_help);
+    help["-?"]["-h"]["--help"]("display usage information", "help");
+    Option out(send_to_file);
+    out["-o"]["--out"]("send output to a given file", "out");
+    out.set_require_argument(true);
+    add_options(list,
+                successful_tests,
+                help,
+                out);
+}
+
+// Redirects cout to file
+void redirect_cout_to_file() {
+    // Get file argument from option
+    Option option = options_unordered_map.at("out");
+    std::string file_name = option.get_argument();
+    // Redirect cout output to file
+    file_out.open(file_name);
+    coutbuf = std::cout.rdbuf();
+    std::cout.rdbuf(file_out.rdbuf());
+}
+
 // Return std::string based on type
 template <typename T>
-std::string get_string(T var) {
+inline std::string get_string(T var) {
     // Argument given is numeric value, return std::to_string
     return std::to_string(var);
 }
 
 template <>
-std::string get_string(std::string var) {
+inline std::string get_string(std::string var) {
     // Argument given is already a string, simply return
     return var;
 }
 
 template <>
-std::string get_string(const char *var) {
+inline std::string get_string(const char *var) {
     // Argument given is const char*, convert to string
     std::string new_var = var;
     return new_var;
 }
 
 template <>
-std::string get_string(char var) {
+inline std::string get_string(char var) {
     // Argument given is a char, return with string constructor
     return std::string(1, var);
 }
@@ -134,16 +275,18 @@ void add_assertion(Assertion &assertion) {
     if (assertion.passed == false) {
         switch (assertion.type) {
             case AssertionType::REQUIRE:
-                throw coretest::CoreTestError("REQUIRE_" + assertion.suffix + "( " + assertion.first + assertion.comparison_operator + assertion.second + " )");
+                throw CoreTestError("Failed require encountered");
+                break;
+            default:
                 break;
         }
     }
 }
 
 // Return if any assertion from start_index to end_index have failed
-bool has_failed(int start_index, int end_index) {
-    for (auto assertion : assertions) {
-        if (assertion.passed = false) {
+bool has_failed(size_t start_index, size_t end_index) {
+    for (size_t i = start_index; i < end_index; i++) {
+        if (assertions[i].passed == false) {
             return true;
         }
     }
@@ -151,6 +294,45 @@ bool has_failed(int start_index, int end_index) {
 }
 
 // Output functions
+
+void print_option(std::string args, std::string description, int max_argument_length) {
+    std::cout << std::string(4, ' ') << args << std::string((max_argument_length - args.length()) + 5, ' ') << description << '\n';
+}
+
+void print_help() {
+    std::cout << '\n';
+    std::cout << "usage:" << '\n';
+    std::cout << std::string(4, ' ') << "<executable> [<test name> ... ] options"
+              << "\n\n";
+    std::cout << "options:" << '\n';
+    std::vector<std::string> args;
+    std::vector<std::string> descriptions;
+    int max_argument_length = -1;
+    for (std::pair<std::string, Option> element : options_unordered_map) {
+        Option option = element.second;
+        // Compose args and description string
+        std::string option_args;
+        std::string option_description;
+        std::vector<std::string> option_args_vector = option.get_args();
+        for (size_t i = 0; i < option_args_vector.size(); i++) {
+            option_args += option_args_vector[i];
+            if (i != option_args_vector.size() - 1) {
+                // Not last arg iteration
+                option_args += ", ";
+            }
+        }
+        option_description = option.get_description();
+        max_argument_length = std::max((int)(option_args.size()), max_argument_length);
+        // Push into vectors
+        args.push_back(option_args);
+        descriptions.push_back(option_description);
+    }
+    // Print options
+    for (size_t i = 0; i < args.size(); i++) {
+        print_option(args[i], descriptions[i], max_argument_length);
+    }
+    std::cout << "\nSee documentation for more information" << '\n';
+}
 
 // Print formatted test name with file name and line number
 void print_test(Test test) {
@@ -174,12 +356,12 @@ void print_assertion(Assertion assertion) {
     std::cout << assertion.suffix << "( " + assertion.first + assertion.comparison_operator + assertion.second + " )" << '\n';
 }
 
-// Print failed checks from specified index and increment counter.
+// Print failed assertions from specified index and increment fail counter
 // Can be overriden to print passed assertions if show_successful flag is true
-void print_checks(int initial_assertions, int &assertions_failed) {
-    for (int i = initial_assertions; i < assertions.size(); i++) {
+void print_assertions(int initial_assertions, int &assertions_failed) {
+    for (size_t i = initial_assertions; i < assertions.size(); i++) {
         Assertion assertion = assertions[i];
-        if ((show_successful && assertion.passed == true) || (assertion.passed == false && assertion.type == AssertionType::CHECK)) {
+        if (show_successful == true || assertion.passed == false) {
             print_assertion(assertion);
             if (assertion.passed == false) {
                 assertions_failed++;
@@ -234,12 +416,8 @@ void run_tests() {
             // Print test case
             print_test(test);
             // Print failed checks
-            print_checks(initial_assertions, assertions_failed);
-            // Print failed assertion
-            std::cout << "FAILED:" << '\n';
-            std::cout << std::string(4, ' ') << e.what() << '\n';
+            print_assertions(initial_assertions, assertions_failed);
             // Assertions failed increase by 1 to account for thrown error
-            assertions_failed++;
             tests_failed++;
         }
         if (!has_catch && has_failed(initial_assertions, assertions.size())) {
@@ -247,11 +425,11 @@ void run_tests() {
             // Print test case
             print_test(test);
             // Print failed checks
-            print_checks(initial_assertions, assertions_failed);
+            print_assertions(initial_assertions, assertions_failed);
             tests_failed++;
         } else if (!has_catch && show_successful == true) {
             print_test(test);
-            print_checks(initial_assertions, assertions_failed);
+            print_assertions(initial_assertions, assertions_failed);
         }
     }
     print_results(tests_failed, assertions_failed);
@@ -264,7 +442,53 @@ void list_tests() {
         std::cout << std::string(4, ' ') << test.test_name << '\n';
     }
 }
-};  // namespace coretest
+
+// Provided main
+void run_main(int argc, char **argv) {
+    initialize_options();
+    if (argc > 1) {
+        // Parse args
+        for (int i = 0; i < argc; i++) {
+            std::string arg = argv[i];
+            if (!test_case_option.is_match(arg)) {
+                // Option is not in the form of a specified test case
+                for (std::pair<std::string, Option> element : options_unordered_map) {
+                    Option option = element.second;
+                    if (option.is_match(arg)) {
+                        if (option.get_require_argument() == true) {
+                            // Option requires argument
+                            if (i == argc - 1) {
+                                // Current argument is last argument, no argument follows
+                                throw CoreTestError("Expected argument following " + arg);
+                            }
+                            std::string option_argument = argv[i + 1];
+                            options_unordered_map.at(element.first).set_argument(option_argument);
+                            // Increment i to skip next argument
+                            i++;
+                        }
+                        break;
+                    }
+                }
+            }
+        }
+    }
+    if (send_to_file) {
+        redirect_cout_to_file();
+    }
+    if (show_list) {
+        list_tests();
+    } else if (show_help) {
+        print_help();
+    } else {
+        run_tests();
+    }
+    if (send_to_file) {
+        std::cout.rdbuf(coutbuf);
+        file_out.close();
+    }
+}
+
+}  // namespace coretest
 
 // Define test case macro
 #define TEST(test_name)                                                                      \
@@ -277,220 +501,210 @@ void list_tests() {
 
 // Define assertion macros
 
-#define REQUIRE_EQUAL(first, second)            \
+#define REQUIRE_EQUAL(x, y)                     \
     {                                           \
+        auto first = x;                         \
+        auto second = y;                        \
         coretest::Assertion assertion = {       \
             ((first == second) ? true : false), \
             coretest::AssertionType::REQUIRE,   \
             coretest::ComparisonType::EQUAL,    \
             coretest::get_string(first),        \
-            coretest::get_string(second),       \
-        };                                      \
+            coretest::get_string(second)};      \
         coretest::add_assertion(assertion);     \
     }
 
-#define REQUIRE_TRUE(first)                   \
+#define REQUIRE_TRUE(x)                       \
     {                                         \
+        auto first = x;                       \
         coretest::Assertion assertion = {     \
             ((first == true) ? true : false), \
             coretest::AssertionType::REQUIRE, \
             coretest::ComparisonType::TRUE,   \
-            coretest::get_string(first),      \
-        };                                    \
+            coretest::get_string(first)};     \
         coretest::add_assertion(assertion);   \
     }
 
-#define REQUIRE_FALSE(first)                   \
+#define REQUIRE_FALSE(x)                       \
     {                                          \
+        auto first = x;                        \
         coretest::Assertion assertion = {      \
             ((first == false) ? true : false), \
             coretest::AssertionType::REQUIRE,  \
             coretest::ComparisonType::FALSE,   \
-            coretest::get_string(first),       \
-        };                                     \
+            coretest::get_string(first)};      \
         coretest::add_assertion(assertion);    \
     }
 
-#define REQUIRE_NOT_EQUAL(first, second)         \
+#define REQUIRE_NOT_EQUAL(x, y)                  \
     {                                            \
+        auto first = x;                          \
+        auto second = y;                         \
         coretest::Assertion assertion = {        \
             ((first != second) ? true : false),  \
             coretest::AssertionType::REQUIRE,    \
             coretest::ComparisonType::NOT_EQUAL, \
             coretest::get_string(first),         \
-            coretest::get_string(second),        \
-        };                                       \
+            coretest::get_string(second)};       \
         coretest::add_assertion(assertion);      \
     }
 
-#define REQUIRE_LESS(first, second)            \
+#define REQUIRE_LESS(x, y)                     \
     {                                          \
+        auto first = x;                        \
+        auto second = y;                       \
         coretest::Assertion assertion = {      \
             ((first < second) ? true : false), \
             coretest::AssertionType::REQUIRE,  \
             coretest::ComparisonType::LESS,    \
             coretest::get_string(first),       \
-            coretest::get_string(second),      \
-        };                                     \
+            coretest::get_string(second)};     \
         coretest::add_assertion(assertion);    \
     }
 
-#define REQUIRE_LESS_EQUAL(first, second)         \
+#define REQUIRE_LESS_EQUAL(x, y)                  \
     {                                             \
+        auto first = x;                           \
+        auto second = y;                          \
         coretest::Assertion assertion = {         \
             ((first <= second) ? true : false),   \
             coretest::AssertionType::REQUIRE,     \
             coretest::ComparisonType::LESS_EQUAL, \
             coretest::get_string(first),          \
-            coretest::get_string(second),         \
-        };                                        \
+            coretest::get_string(second)};        \
         coretest::add_assertion(assertion);       \
     }
 
-#define REQUIRE_GREATER(first, second)         \
+#define REQUIRE_GREATER(x, y)                  \
     {                                          \
+        auto first = x;                        \
+        auto second = y;                       \
         coretest::Assertion assertion = {      \
             ((first > second) ? true : false), \
             coretest::AssertionType::REQUIRE,  \
             coretest::ComparisonType::GREATER, \
             coretest::get_string(first),       \
-            coretest::get_string(second),      \
-        };                                     \
+            coretest::get_string(second)};     \
         coretest::add_assertion(assertion);    \
     }
 
-#define REQUIRE_GREATER_EQUAL(first, second)         \
+#define REQUIRE_GREATER_EQUAL(x, y)                  \
     {                                                \
+        auto first = x;                              \
+        auto second = y;                             \
         coretest::Assertion assertion = {            \
             ((first >= second) ? true : false),      \
             coretest::AssertionType::REQUIRE,        \
             coretest::ComparisonType::GREATER_EQUAL, \
             coretest::get_string(first),             \
-            coretest::get_string(second),            \
-        };                                           \
+            coretest::get_string(second)};           \
         coretest::add_assertion(assertion);          \
     }
 
-#define CHECK_EQUAL(first, second)              \
+#define CHECK_EQUAL(x, y)                       \
     {                                           \
+        auto first = x;                         \
+        auto second = y;                        \
         coretest::Assertion assertion = {       \
             ((first == second) ? true : false), \
             coretest::AssertionType::CHECK,     \
             coretest::ComparisonType::EQUAL,    \
             coretest::get_string(first),        \
-            coretest::get_string(second),       \
-        };                                      \
+            coretest::get_string(second)};      \
         coretest::add_assertion(assertion);     \
     }
 
-#define CHECK_TRUE(first)                     \
+#define CHECK_TRUE(x)                         \
     {                                         \
+        auto first = x;                       \
         coretest::Assertion assertion = {     \
             ((first == true) ? true : false), \
             coretest::AssertionType::CHECK,   \
             coretest::ComparisonType::TRUE,   \
-            coretest::get_string(first),      \
-        };                                    \
+            coretest::get_string(first)};     \
         coretest::add_assertion(assertion);   \
     }
 
-#define CHECK_FALSE(first)                     \
+#define CHECK_FALSE(x)                         \
     {                                          \
+        auto first = x;                        \
         coretest::Assertion assertion = {      \
             ((first == false) ? true : false), \
             coretest::AssertionType::CHECK,    \
             coretest::ComparisonType::FALSE,   \
-            coretest::get_string(first),       \
-        };                                     \
+            coretest::get_string(first)};      \
         coretest::add_assertion(assertion);    \
     }
 
-#define CHECK_NOT_EQUAL(first, second)           \
+#define CHECK_NOT_EQUAL(x, y)                    \
     {                                            \
+        auto first = x;                          \
+        auto second = y;                         \
         coretest::Assertion assertion = {        \
             ((first != second) ? true : false),  \
             coretest::AssertionType::CHECK,      \
             coretest::ComparisonType::NOT_EQUAL, \
             coretest::get_string(first),         \
-            coretest::get_string(second),        \
-        };                                       \
+            coretest::get_string(second)};       \
         coretest::add_assertion(assertion);      \
     }
 
-#define CHECK_LESS(first, second)              \
+#define CHECK_LESS(x, y)                       \
     {                                          \
+        auto first = x;                        \
+        auto second = y;                       \
         coretest::Assertion assertion = {      \
             ((first < second) ? true : false), \
             coretest::AssertionType::CHECK,    \
             coretest::ComparisonType::LESS,    \
             coretest::get_string(first),       \
-            coretest::get_string(second),      \
-        };                                     \
+            coretest::get_string(second)};     \
         coretest::add_assertion(assertion);    \
     }
 
-#define CHECK_LESS_EQUAL(first, second)           \
+#define CHECK_LESS_EQUAL(x, y)                    \
     {                                             \
+        auto first = x;                           \
+        auto second = y;                          \
         coretest::Assertion assertion = {         \
             ((first <= second) ? true : false),   \
             coretest::AssertionType::CHECK,       \
             coretest::ComparisonType::LESS_EQUAL, \
             coretest::get_string(first),          \
-            coretest::get_string(second),         \
-        };                                        \
+            coretest::get_string(second)};        \
         coretest::add_assertion(assertion);       \
     }
 
-#define CHECK_GREATER(first, second)           \
+#define CHECK_GREATER(x, y)                    \
     {                                          \
+        auto first = x;                        \
+        auto second = y;                       \
         coretest::Assertion assertion = {      \
             ((first > second) ? true : false), \
             coretest::AssertionType::CHECK,    \
             coretest::ComparisonType::GREATER, \
             coretest::get_string(first),       \
-            coretest::get_string(second),      \
-        };                                     \
+            coretest::get_string(second)};     \
         coretest::add_assertion(assertion);    \
     }
 
-#define CHECK_GREATER_EQUAL(first, second)           \
+#define CHECK_GREATER_EQUAL(x, y)                    \
     {                                                \
+        auto first = x;                              \
+        auto second = y;                             \
         coretest::Assertion assertion = {            \
             ((first >= second) ? true : false),      \
             coretest::AssertionType::CHECK,          \
             coretest::ComparisonType::GREATER_EQUAL, \
             coretest::get_string(first),             \
-            coretest::get_string(second),            \
-        };                                           \
+            coretest::get_string(second)};           \
         coretest::add_assertion(assertion);          \
     }
 
+#if !defined(CORETEST_IMPLEMENT_WITHOUT_MAIN)
 // Standard main entry point
 int main(int argc, char **argv) {
-    bool list_tests = false;
-    if (argc > 1) {
-        // Parse args
-        for (int i = 1; i < argc; i++) {
-            std::string arg = argv[i];
-            if (arg[0] == '[' && arg[arg.length() - 1] == ']') {
-                // Get test name without [ ] chars
-                std::string test_name = arg.substr(1, arg.length() - 2);
-                // Remove whitespace
-                test_name.erase(std::remove(test_name.begin(), test_name.end(), ' '), test_name.end());
-                coretest::specified_tests.push_back(test_name);
-            } else if (arg == "-l" || arg == "--list-tests") {
-                // List tests
-                list_tests = true;
-            } else if (arg == "-s" || arg == "--success") {
-                // Show successful tests
-                coretest::show_successful = true;
-            }
-        }
-    }
-    if (list_tests) {
-        coretest::list_tests();
-    } else {
-        coretest::run_tests();
-    }
+    coretest::run_main(argc, argv);
 }
+#endif
 #endif

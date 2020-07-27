@@ -1,6 +1,7 @@
 .vscode
 *.exe
 *.o
+build
 
 # CMake
 CMakeLists.txt.user
