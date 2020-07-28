@@ -54,7 +54,9 @@ For example, the `is_even_test` test case can be run with:
 
 | Query flags                | Description                         |
 |----------------------------|-------------------------------------|
+| `-d`, `--durations`        | show duration of each test case     |
 | `-?`, `-h`, `--help`       | display usage information           |
+| `-q`, `--quiet`            | disable all logging                 |
 | `-l`, `--list-tests`       | list all test cases                 |
 | `-o`, `--out` `<filename>` | write output to filename            |
 | `-s`, `--success`          | include successful tests in output  |

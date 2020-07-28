@@ -1,10 +1,14 @@
 #ifndef CORETEST_HPP
 #define CORETEST_HPP
 
+#include <math.h>
+
 #include <algorithm>
+#include <chrono>
 #include <exception>
 #include <fstream>
 #include <functional>
+#include <iomanip>
 #include <iostream>
 #include <map>
 #include <unordered_map>
@@ -72,6 +76,8 @@ std::map<std::string, int> test_names;
 std::vector<std::string> specified_tests;
 // Holds all assertions
 std::vector<Assertion> assertions;
+// Holds duration of each test case
+std::vector<double> durations;
 std::ofstream file_out;
 std::streambuf *coutbuf;
 
@@ -79,6 +85,25 @@ PushTest::PushTest(std::function<void()> &&test, std::string test_name, std::str
     tests.push_back({test, test_name, file_name, line_number});
     test_names[test_name] = tests.size();
 }
+
+class Timer {
+   public:
+    Timer() {
+        start_timepoint = std::chrono::high_resolution_clock::now();
+    }
+
+    ~Timer() {
+        stop();
+    }
+
+    void stop() {
+        double duration = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - start_timepoint).count();
+        durations.push_back(duration * 0.001);
+    }
+
+   private:
+    std::chrono::time_point<std::chrono::high_resolution_clock> start_timepoint;
+};
 
 // Command line option
 class Option {
@@ -168,6 +193,8 @@ bool show_successful = false;
 bool show_list = false;
 bool show_help = false;
 bool send_to_file = false;
+bool silence_output = false;
+bool show_durations = false;
 
 template <typename First, typename... Rest>
 void add_options(First first, Rest... rest) {
@@ -182,19 +209,25 @@ void add_options(Option option) {
 
 // Initialize options
 void initialize_options() {
+    Option help(show_help);
+    help["-?"]["-h"]["--help"]("display usage information", "help");
     Option list(show_list);
     list["-l"]["--list-tests"]("list all test cases", "list");
     Option successful_tests(show_successful);
     successful_tests["-s"]["--success"]("include successful tests in output", "successful_tests");
-    Option help(show_help);
-    help["-?"]["-h"]["--help"]("display usage information", "help");
     Option out(send_to_file);
     out["-o"]["--out"]("send output to a given file", "out");
     out.set_require_argument(true);
+    Option quiet(silence_output);
+    quiet["-q"]["--quiet"]("disable all logging", "quiet");
+    Option duration(show_durations);
+    duration["-d"]["--durations"]("show duration of each test case", "duration");
     add_options(list,
                 successful_tests,
                 help,
-                out);
+                out,
+                quiet,
+                duration);
 }
 
 // Redirects cout to file
@@ -410,6 +443,7 @@ void run_tests() {
         initial_assertions = assertions.size();
         bool has_catch = false;
         try {
+            Timer timer;
             test.function();
         } catch (CoreTestError &e) {
             has_catch = true;
@@ -435,6 +469,20 @@ void run_tests() {
     print_results(tests_failed, assertions_failed);
 }
 
+void print_durations() {
+    std::cout << '\n';
+    // Find longest duration length in string form
+    int max_duration_length = 0;
+    for (auto duration : durations) {
+        max_duration_length = std::max((int)(std::to_string(duration).length()), max_duration_length);
+    }
+    for (size_t i = 0; i < durations.size(); i++) {
+        // Find spacing to align durations
+        std::string spacing = std::string(max_duration_length - (int)(std::to_string(durations[i]).length()), ' ');
+        std::cout << std::fixed << std::setprecision(3) << durations[i] << " ms: " << spacing << tests[i].test_name << '\n';
+    }
+}
+
 void list_tests() {
     std::cout << '\n';
     std::cout << "All available test cases:" << '\n';
@@ -448,13 +496,15 @@ void run_main(int argc, char **argv) {
     initialize_options();
     if (argc > 1) {
         // Parse args
-        for (int i = 0; i < argc; i++) {
+        for (int i = 1; i < argc; i++) {
             std::string arg = argv[i];
+            bool is_valid = false;
             if (!test_case_option.is_match(arg)) {
                 // Option is not in the form of a specified test case
                 for (std::pair<std::string, Option> element : options_unordered_map) {
                     Option option = element.second;
                     if (option.is_match(arg)) {
+                        is_valid = true;
                         if (option.get_require_argument() == true) {
                             // Option requires argument
                             if (i == argc - 1) {
@@ -469,22 +519,33 @@ void run_main(int argc, char **argv) {
                         break;
                     }
                 }
+            } else {
+                is_valid = true;
+            }
+            if (!is_valid) {
+                throw CoreTestError("Unrecognized argument: " + arg);
             }
         }
     }
-    if (send_to_file) {
-        redirect_cout_to_file();
-    }
-    if (show_list) {
-        list_tests();
-    } else if (show_help) {
-        print_help();
-    } else {
-        run_tests();
-    }
-    if (send_to_file) {
-        std::cout.rdbuf(coutbuf);
-        file_out.close();
+    if (!silence_output) {
+        if (send_to_file) {
+            redirect_cout_to_file();
+        }
+        if (show_list) {
+            list_tests();
+        } else if (show_help) {
+            print_help();
+        } else {
+            run_tests();
+            if (show_durations) {
+                print_durations();
+            }
+        }
+        if (send_to_file) {
+            // Redirect buffer and close file
+            std::cout.rdbuf(coutbuf);
+            file_out.close();
+        }
     }
 }
 
